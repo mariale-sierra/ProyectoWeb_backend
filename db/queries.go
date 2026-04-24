@@ -4,7 +4,7 @@ import "database/sql"
 
 func SearchSeries(database *sql.DB, query string) ([]Series, error) {
 	rows, err := database.Query(`
-		SELECT id, name, current_episode, total_episodes
+		SELECT id, name, current_episode, total_episodes, image
 		FROM series
 		WHERE name LIKE ?
 	`, "%"+query+"%")
@@ -17,7 +17,7 @@ func SearchSeries(database *sql.DB, query string) ([]Series, error) {
 
 	for rows.Next() {
 		var s Series
-		err := rows.Scan(&s.ID, &s.Name, &s.Current, &s.Total)
+		err := rows.Scan(&s.ID, &s.Name, &s.Current, &s.Total, &s.Image)
 		if err != nil {
 			return nil, err
 		}
@@ -27,13 +27,17 @@ func SearchSeries(database *sql.DB, query string) ([]Series, error) {
 	return list, nil
 }
 
-func GetSeriesPaginated(database *sql.DB, limit int, offset int) ([]Series, error) {
-	rows, err := database.Query(`
-		SELECT id, name, current_episode, total_episodes
+
+func GetSeriesPaginatedSorted(database *sql.DB, limit int, offset int, sort string, order string) ([]Series, error) {
+	query := `
+		SELECT id, name, current_episode, total_episodes, image
 		FROM series
 		WHERE added = 1
+		ORDER BY ` + sort + ` ` + order + `
 		LIMIT ? OFFSET ?
-	`, limit, offset)
+	`
+
+	rows, err := database.Query(query, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +47,7 @@ func GetSeriesPaginated(database *sql.DB, limit int, offset int) ([]Series, erro
 
 	for rows.Next() {
 		var s Series
-		err := rows.Scan(&s.ID, &s.Name, &s.Current, &s.Total)
+		err := rows.Scan(&s.ID, &s.Name, &s.Current, &s.Total, &s.Image)
 		if err != nil {
 			return nil, err
 		}
@@ -64,71 +68,27 @@ func EditRating(database *sql.DB, seriesID int, rating int) error {
 	return err
 }
 
-func GetRatingsBySeries(database *sql.DB, seriesID int) ([]map[string]int, error) {
-	rows, err := database.Query(`
-		SELECT episode, rating
-		FROM ratings
-		WHERE series_id = ?
-	`, seriesID)
+func GetAllRatings(database *sql.DB) ([]SeriesRating, error) {
+    rows, err := database.Query(`
+        SELECT s.id, s.name, r.rating
+        FROM series s
+        LEFT JOIN ratings r ON s.id = r.series_id
+        WHERE s.added = 1
+    `)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
 
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+    list := []SeriesRating{}
 
-	list := []map[string]int{}
+    for rows.Next() {
+        var s SeriesRating
+        rows.Scan(&s.ID, &s.Name, &s.Rating)
+        list = append(list, s)
+    }
 
-	for rows.Next() {
-		var ep, rating int
-		rows.Scan(&ep, &rating)
-
-		list = append(list, map[string]int{
-			"episode": ep,
-			"rating":  rating,
-		})
-	}
-
-	return list, nil
-}
-
-func GetAllRatings(database *sql.DB) ([]map[string]interface{}, error) {
-	rows, err := database.Query(`
-		SELECT 
-    		s.id,
-    		s.name,
-   			r.rating
-		FROM series s
-		LEFT JOIN ratings r ON s.id = r.series_id
-		WHERE s.added = 1
-		`)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	list := []map[string]interface{}{}
-
-	for rows.Next() {
-		var id int
-		var name string
-		var rating sql.NullInt64
-
-		rows.Scan(&id, &name, &rating)
-
-		list = append(list, map[string]interface{}{
-			"id": id,
-			"name": name,
-			"rating": func() interface{} {
-				if rating.Valid {
-					return rating.Int64
-				}
-				return nil
-			}(),
-		})
-	}
-
-	return list, nil
+    return list, nil
 }
 
 func UpdateEpisode(database *sql.DB, id string) error {
