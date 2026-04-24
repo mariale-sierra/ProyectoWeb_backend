@@ -1,168 +1,200 @@
 package handlers
 
 import (
+	"ProyectoWeb_backend/db"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
-	"ProyectoWeb_backend/db"
+	"strconv"
+	"strings"
 )
 
 func GetSeries(database *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		query := r.URL.Query().Get("q")
+		pageStr := r.URL.Query().Get("page")
+		limitStr := r.URL.Query().Get("limit")
 
-        query := r.URL.Query().Get("q")
+		page, _ := strconv.Atoi(pageStr)
+		limit, _ := strconv.Atoi(limitStr)
 
-        var (
-            series []db.Series
-            err    error
-        )
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 {
+			limit = 10
+		}
 
-        if query != "" {
-            series, err = db.SearchSeries(database, query)
-        } else {
-            series, err = db.GetAllSeries(database)
-        }
+		offset := (page - 1) * limit
 
-        if err != nil {
-            http.Error(w, "Error interno", 500)
-            return
-        }
+		var (
+			series []db.Series
+			err    error
+		)
 
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(series)
-    }
+		if query != "" {
+			series, err = db.SearchSeries(database, query)
+		} else {
+			series, err = db.GetSeriesPaginated(database, limit, offset)
+		}
+
+		if err != nil {
+			http.Error(w, "Error interno", 500)
+			return
+		}
+
+		json.NewEncoder(w).Encode(series)
+	}
 }
 
-
 func AddSeries(database *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {   
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-        if r.Method != "POST" {
-            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-            return
-        }
+		if r.Method != "POST" {
+			http.Error(w, "Method not allowed", 405)
+			return
+		}
 
-        var newSeries struct {
-            Name    string `json:"name"`
-            Current int    `json:"current_episode"`
-            Total   int    `json:"total_episodes"`
-        }
+		var body struct {
+			ID int `json:"id"`
+		}
 
-        err := json.NewDecoder(r.Body).Decode(&newSeries)
-        if err != nil {
-            http.Error(w, "Invalid JSON", http.StatusBadRequest)
-            return
-        }
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err != nil {
+			http.Error(w, "Invalid JSON", 400)
+			return
+		}
 
-        _, err = database.Exec(
-            "INSERT INTO series (name, current_episode, total_episodes) VALUES (?, ?, ?)",
-            newSeries.Name, newSeries.Current, newSeries.Total,
-        )
+		if body.ID < 1 {
+			http.Error(w, "Invalid series id", 400)
+			return
+		}
 
-        if err != nil {
-            http.Error(w, "DB error", http.StatusInternalServerError)
-            return
-        }
+		result, err := database.Exec(`
+			UPDATE series
+			SET added = 1
+			WHERE id = ?
+		`, body.ID)
 
-        w.WriteHeader(http.StatusCreated)
-        json.NewEncoder(w).Encode(map[string]string{
-            "message": "Series created",
-        })
-    }
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		log.Printf("AddSeries id=%d rows_updated=%d", body.ID, rowsAffected)
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":      "Series added",
+			"rows_updated": rowsAffected,
+		})
+	}
+}
+
+func SeriesRating(database *sql.DB) http.HandlerFunc {
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/rating") {
+			if r.Method == "GET" {
+				GetRatings(database)(w, r)
+				return
+			}
+
+			if r.Method == "POST" {
+				AddOrUpdateRating(database)(w, r)
+				return
+			}
+		}
+
+		http.NotFound(w, r)
+	}
+}
+
+func GetAllRatings(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		data, err := db.GetAllRatings(database)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
+
+		json.NewEncoder(w).Encode(data)
+	}
 }
 
 func GetRatings(database *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		idStr := strings.TrimPrefix(r.URL.Path, "/series/")
+		idStr = strings.TrimSuffix(idStr, "/rating")
 
-        rows, err := database.Query(`
-            SELECT s.id, s.name, r.rating
-            FROM ratings r
-            JOIN series s ON s.id = r.series_id
-        `)
+		seriesID, _ := strconv.Atoi(idStr)
 
-        if err != nil {
-            http.Error(w, "DB error", 500)
-            return
-        }
-        defer rows.Close()
+		ratings, err := db.GetRatingsBySeries(database, seriesID)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
 
-        var results []map[string]interface{}
+		json.NewEncoder(w).Encode(ratings)
+	}
+}
 
-        for rows.Next() {
-            var id int
-            var name string
-            var rating int
+func AddOrUpdateRating(database *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 
-            err := rows.Scan(&id, &name, &rating)
-            if err != nil {
-                http.Error(w, "Scan error", 500)
-                return
-            }
+		if r.Method != "POST" {
+			http.Error(w, "Method not allowed", 405)
+			return
+		}
 
-            results = append(results, map[string]interface{}{
-                "id":     id,
-                "name":   name,
-                "rating": rating,
-            })
-        }
+		idStr := strings.TrimPrefix(r.URL.Path, "/series/")
+		idStr = strings.TrimSuffix(idStr, "/rating")
 
-        json.NewEncoder(w).Encode(results)
-    }
+		seriesID, _ := strconv.Atoi(idStr)
+
+		var body struct {
+			Rating  int `json:"rating"`
+		}
+
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err != nil {
+			http.Error(w, "Invalid JSON", 400)
+			return
+		}
+
+		err = db.EditRating(database, seriesID, body.Rating)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "rating saved",
+		})
+	}
 }
 
 func UpdateEpisode(database *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 
-        // CORS
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		id := r.URL.Query().Get("id")
 
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+		err := db.UpdateEpisode(database, id)
+		if err != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
 
-        if r.Method != "POST" {
-            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-            return
-        }
-
-        id := r.URL.Query().Get("id")
-
-        if id == "" {
-            http.Error(w, "Missing id", http.StatusBadRequest)
-            return
-        }
-
-        _, err := database.Exec(`
-            UPDATE series
-            SET current_episode = current_episode + 1
-            WHERE id = ? AND current_episode < total_episodes
-        `, id)
-
-        if err != nil {
-            http.Error(w, "DB error", http.StatusInternalServerError)
-            return
-        }
-
-        json.NewEncoder(w).Encode(map[string]string{
-            "message": "Episode updated",
-        })
-    }
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Episode updated",
+		})
+	}
 }
