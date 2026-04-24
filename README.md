@@ -30,15 +30,13 @@ La API expone endpoints para:
 ---
 
 ## ▶️ Cómo ejecutar en el servidor
-
-1. Conectarse al servidor:
-
+- Conectarse al servidor:
 ssh -i id_gcp student@35.239.29.236
-2. Ir al backend:
+- Ir al backend:
 cd ~/24405/ProyectoWeb/ProyectoWeb_backend
-3. Ejecutar el servidor:
+- Ejecutar el servidor:
 nohup ./app &
-4. Abrir en el navegador:
+- Abrir en el navegador:
 http://35.239.29.236
 
 ## Reflexión
