@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
-
+	"os"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -23,6 +23,16 @@ func main() {
     http.HandleFunc("/update", handlers.UpdateEpisode(db))
     http.HandleFunc("/ratings", handlers.GetAllRatings(db))
 
-    log.Println("Server running on http://localhost:8080")
-    log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
+	
+	fs := http.FileServer(http.Dir("../ProyectoWeb_frontend"))
+	http.Handle("/", fs)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Println("Server running on :" + port)
+	http.ListenAndServe(":"+port, nil)
+    log.Fatal(http.ListenAndServe(":8080", nil))
+	
 }
